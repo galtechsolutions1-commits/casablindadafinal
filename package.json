@@ -1,0 +1,12 @@
+{
+  "name": "casa-blindada-final",
+  "version": "1.0.0",
+  "description": "Webhook Kiwify para Casa Blindada",
+  "main": "api/webhook.js",
+  "scripts": {
+    "start": "node api/webhook.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

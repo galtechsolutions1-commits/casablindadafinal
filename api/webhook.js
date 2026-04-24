@@ -1,15 +1,14 @@
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed. Use POST.' });
-  }
+const express = require('express');
+const app = express();
+app.use(express.json());
 
+app.post('/api/webhook', async (req, res) => {
   const secret = req.headers['x-kw-secret'];
   if (secret !== process.env.KIWIFY_WEBHOOK_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const { event, data } = req.body;
-
   if (event !== 'sale.approved') {
     return res.status(200).json({ received: true });
   }
@@ -22,6 +21,7 @@ export default async function handler(req, res) {
     const produto = product?.name || 'Casa Blindada';
     const comissao = valor * 0.8;
 
+    // Supabase
     if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
       await fetch(`${process.env.SUPABASE_URL}/rest/v1/vendas`, {
         method: 'POST',
@@ -34,6 +34,7 @@ export default async function handler(req, res) {
       }).catch(() => {});
     }
 
+    // Z-API
     if (whatsapp && process.env.ZAPI_INSTANCE && process.env.ZAPI_TOKEN) {
       await fetch(`https://api.z-api.io/instances/${process.env.ZAPI_INSTANCE}/token/${process.env.ZAPI_TOKEN}/send-text`, {
         method: 'POST',
@@ -42,8 +43,11 @@ export default async function handler(req, res) {
       }).catch(() => {});
     }
 
-    return res.status(200).json({ success: true });
+    res.status(200).json({ success: true });
   } catch (error) {
-    return res.status(500).json({ error: 'Internal error' });
+    res.status(500).json({ error: 'Internal error' });
   }
-}
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log('Webhook rodando na porta ' + PORT));

@@ -1,11 +1,12 @@
 // api/webhook.js
-export default async function handler(req, res) {
-  console.log("🔔 Webhook chamado. Method:", req.method);
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+import express from 'express';
 
-  // Validação do segredo (opcional, mas recomendado)
+const app = express();
+app.use(express.json());
+
+app.post('/api/webhook', async (req, res) => {
+  console.log("🔔 Webhook chamado. Method:", req.method);
+
   const secret = req.headers['x-kw-secret'];
   console.log("Secret recebido:", secret);
   if (secret !== process.env.KIWIFY_WEBHOOK_SECRET) {
@@ -16,7 +17,6 @@ export default async function handler(req, res) {
   const payload = req.body;
   console.log("Evento recebido:", payload.webhook_event_type);
 
-  // Aceita apenas eventos de aprovação de pagamento
   if (payload.webhook_event_type !== 'order_approved' && payload.webhook_event_type !== 'order_paid') {
     console.log("ℹ️ Evento ignorado:", payload.webhook_event_type);
     return res.status(200).json({ received: true });
@@ -28,26 +28,21 @@ export default async function handler(req, res) {
     return res.status(200).json({ received: true, error: 'no_order' });
   }
 
-  // Extrair dados do cliente
   const customer = order.Customer || {};
   const nome = customer.full_name || customer.first_name || 'Cliente';
   const email = customer.email;
   const whatsapp = customer.mobile ? customer.mobile.replace(/\D/g, '') : '';
-  
-  // Extrair dados do produto
+
   const product = order.Product || {};
   const produtoNome = product.product_name || 'Casa Blindada';
-  
-  // Extrair valor da comissão ou preço base
+
   const commissions = order.Commissions || {};
   const valor = commissions.product_base_price || commissions.charge_amount || 0;
-  const comissao = commissions.my_commission || (valor * 0.8); // fallback 80%
+  const comissao = commissions.my_commission || (valor * 0.8);
 
   console.log(`📦 Venda recebida: ${nome}, ${produtoNome}, R$ ${valor}, Comissão R$ ${comissao}`);
 
-  // ======================
-  // 1. Registrar no Supabase
-  // ======================
+  // Supabase
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
   if (supabaseUrl && supabaseKey) {
@@ -67,21 +62,15 @@ export default async function handler(req, res) {
           created_at: new Date().toISOString()
         })
       });
-      console.log("✅ Supabase resposta:", supabaseRes.status, supabaseRes.statusText);
-      if (!supabaseRes.ok) {
-        const errText = await supabaseRes.text();
-        console.error("❌ Erro Supabase:", errText);
-      }
+      console.log("✅ Supabase resposta:", supabaseRes.status);
     } catch (err) {
-      console.error("❌ Erro ao conectar Supabase:", err.message);
+      console.error("❌ Erro Supabase:", err.message);
     }
   } else {
-    console.warn("⚠️ Supabase não configurado (faltam URL ou KEY)");
+    console.warn("⚠️ Supabase não configurado");
   }
 
-  // ======================
-  // 2. Enviar WhatsApp via Z-API (se configurado)
-  // ======================
+  // Z-API
   const zapiInstance = process.env.ZAPI_INSTANCE;
   const zapiToken = process.env.ZAPI_TOKEN;
   const zapiClientToken = process.env.ZAPI_CLIENT_TOKEN;
@@ -101,17 +90,13 @@ export default async function handler(req, res) {
           message: msg
         })
       });
-      console.log("📱 Z-API resposta:", zapiRes.status, zapiRes.statusText);
+      console.log("📱 Z-API resposta:", zapiRes.status);
     } catch (err) {
       console.error("❌ Erro Z-API:", err.message);
     }
-  } else {
-    console.warn("⚠️ WhatsApp não enviado: faltam dados (whatsapp ou credenciais Z-API)");
   }
 
-  // ======================
-  // 3. Disparar Pixel Meta (opcional)
-  // ======================
+  // Pixel Meta
   const pixelId = process.env.META_PIXEL_ID;
   const pixelAccessToken = process.env.PIXEL_ACCESS_TOKEN;
   if (pixelId && pixelAccessToken && email) {
@@ -134,9 +119,10 @@ export default async function handler(req, res) {
     } catch (err) {
       console.error("❌ Erro Pixel:", err.message);
     }
-  } else {
-    console.warn("⚠️ Pixel não enviado: faltam credenciais ou email");
   }
 
   res.status(200).json({ success: true });
-}
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Webhook rodando na porta ${PORT}`));

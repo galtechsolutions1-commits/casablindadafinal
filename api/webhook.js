@@ -5,19 +5,17 @@ app.use(express.json());
 
 app.post('/api/webhook', async (req, res) => {
   console.log('🔔 Webhook chamado. Headers:', JSON.stringify(req.headers));
-  console.log('📦 Body recebido:', JSON.stringify(req.body).substring(0, 500));
+  // Exibe o JSON completo para diagnóstico
+  console.log('📦 Body recebido COMPLETO:', JSON.stringify(req.body));
 
-  // Validação opcional do secret (não trava se não existir)
   const secret = req.headers['x-kw-secret'] || req.headers['x-kiwify-secret'];
   const configuredSecret = process.env.KIWIFY_WEBHOOK_SECRET;
   if (configuredSecret && secret !== configuredSecret) {
-    console.log('❌ Secret inválido. Recebido:', secret, 'Esperado:', configuredSecret);
+    console.log('❌ Secret inválido');
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const payload = req.body;
-
-  // Extrai dados do cliente, produto e valores do payload real da Kiwify
   const customer = payload.Customer || payload.customer || {};
   const product = payload.Product || payload.product || {};
   const order = payload.order || payload.Order || {};
@@ -27,32 +25,48 @@ app.post('/api/webhook', async (req, res) => {
   const whatsapp = (customer.mobile || customer.phone || '').replace?.(/\D/g, '') || '';
   const produtoNome = product.product_name || product.name || 'Casa Blindada';
 
-  // Valor da venda: prioriza campos reais do payload Kiwify
-  const valor = Number(
+  // Extrai o valor real da venda de várias possibilidades
+  let valor = Number(
     payload.amount ||
+    payload.total ||
+    payload.order_amount ||
     order.amount ||
     order.total ||
     order.order_amount ||
-    payload.total ||
+    payload.price ||
+    order.price ||
     0
   );
 
-  // Comissão: procura em vários lugares, senão calcula 80%
-  const comissao = Number(
+  // Se ainda estiver zero, procura em subobjetos conhecidos da Kiwify
+  if (valor === 0) {
+    valor = Number(
+      payload.Commissions?.product_base_price ||
+      payload.commissions?.product_base_price ||
+      payload.Commission?.product_base_price ||
+      payload.Order?.amount ||
+      payload.Order?.total ||
+      0
+    );
+  }
+
+  // Comissão
+  let comissao = Number(
     payload.commission ||
     order.commission ||
-    order.my_commission ||
-    payload.Commission ||
+    payload.Commissions?.my_commission ||
     order.Commissions?.my_commission ||
-    order.Commissions?.commission ||
-    (valor * 0.8)
+    payload.Commission?.my_commission ||
+    0
   );
+
+  // Se a comissão ainda for zero, calcula 80% do valor
+  if (comissao === 0 && valor > 0) {
+    comissao = valor * 0.8;
+  }
 
   console.log(`📦 Venda processada: ${nome}, ${produtoNome}, R$ ${valor}, Comissão R$ ${comissao}`);
 
-  // ======================
-  // 1. Registrar no Supabase
-  // ======================
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
   if (supabaseUrl && supabaseKey) {
@@ -73,20 +87,13 @@ app.post('/api/webhook', async (req, res) => {
         })
       });
       console.log('✅ Supabase resposta:', supabaseRes.status);
-      if (!supabaseRes.ok) {
-        const errText = await supabaseRes.text();
-        console.error('❌ Erro Supabase:', errText);
-      }
     } catch (err) {
-      console.error('❌ Erro ao conectar Supabase:', err.message);
+      console.error('❌ Erro Supabase:', err.message);
     }
   } else {
     console.warn('⚠️ Supabase não configurado');
   }
 
-  // ======================
-  // 2. Enviar WhatsApp via Z-API (se configurado)
-  // ======================
   const zapiInstance = process.env.ZAPI_INSTANCE;
   const zapiToken = process.env.ZAPI_TOKEN;
   const zapiClientToken = process.env.ZAPI_CLIENT_TOKEN;
@@ -101,10 +108,7 @@ app.post('/api/webhook', async (req, res) => {
           'Content-Type': 'application/json',
           'Client-Token': zapiClientToken || ''
         },
-        body: JSON.stringify({
-          phone: whatsapp,
-          message: msg
-        })
+        body: JSON.stringify({ phone: whatsapp, message: msg })
       });
       console.log('📱 Z-API resposta:', zapiRes.status);
     } catch (err) {
@@ -112,9 +116,6 @@ app.post('/api/webhook', async (req, res) => {
     }
   }
 
-  // ======================
-  // 3. Disparar Pixel Meta (opcional)
-  // ======================
   const pixelId = process.env.META_PIXEL_ID;
   const pixelAccessToken = process.env.PIXEL_ACCESS_TOKEN;
   if (pixelId && pixelAccessToken && email) {

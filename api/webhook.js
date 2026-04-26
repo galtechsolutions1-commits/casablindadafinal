@@ -17,29 +17,36 @@ app.post('/api/webhook', async (req, res) => {
 
   const payload = req.body;
 
-  // Tenta extrair os dados de todas as formas conhecidas da Kiwify
-  let order = null;
-  if (payload.order) {
-    order = payload.order;
-  } else if (payload.data && payload.data.order) {
-    order = payload.data.order;
-  } else if (payload.Order) {
-    order = payload.Order;
-  } else if (payload.resource) {
-    order = payload.resource;
-  }
-
-  // Se não encontrou um objeto "order", procura diretamente no payload
-  const customer = order?.Customer || order?.customer || payload.Customer || payload.customer || {};
-  const product = order?.Product || order?.product || payload.Product || payload.product || {};
-  const commissions = order?.Commissions || order?.commissions || payload.Commissions || payload.commissions || {};
+  // Extrai dados do cliente, produto e valores do payload real da Kiwify
+  const customer = payload.Customer || payload.customer || {};
+  const product = payload.Product || payload.product || {};
+  const order = payload.order || payload.Order || {};
 
   const nome = customer.full_name || customer.first_name || customer.name || 'Cliente';
   const email = customer.email || '';
   const whatsapp = (customer.mobile || customer.phone || '').replace?.(/\D/g, '') || '';
   const produtoNome = product.product_name || product.name || 'Casa Blindada';
-  const valor = commissions.product_base_price || commissions.charge_amount || order?.amount || payload.amount || 0;
-  const comissao = commissions.my_commission || commissions.commission || (valor * 0.8);
+
+  // Valor da venda: prioriza campos reais do payload Kiwify
+  const valor = Number(
+    payload.amount ||
+    order.amount ||
+    order.total ||
+    order.order_amount ||
+    payload.total ||
+    0
+  );
+
+  // Comissão: procura em vários lugares, senão calcula 80%
+  const comissao = Number(
+    payload.commission ||
+    order.commission ||
+    order.my_commission ||
+    payload.Commission ||
+    order.Commissions?.my_commission ||
+    order.Commissions?.commission ||
+    (valor * 0.8)
+  );
 
   console.log(`📦 Venda processada: ${nome}, ${produtoNome}, R$ ${valor}, Comissão R$ ${comissao}`);
 

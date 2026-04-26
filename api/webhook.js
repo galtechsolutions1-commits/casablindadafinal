@@ -1,48 +1,51 @@
-// api/webhook.js
 import express from 'express';
 
 const app = express();
 app.use(express.json());
 
 app.post('/api/webhook', async (req, res) => {
-  console.log("🔔 Webhook chamado. Method:", req.method);
+  console.log('🔔 Webhook chamado. Headers:', JSON.stringify(req.headers));
+  console.log('📦 Body recebido:', JSON.stringify(req.body).substring(0, 500));
 
-  const secret = req.headers['x-kw-secret'];
-  console.log("Secret recebido:", secret);
-  if (secret !== process.env.KIWIFY_WEBHOOK_SECRET) {
-    console.log("❌ Secret inválido");
+  // Validação opcional do secret (não trava se não existir)
+  const secret = req.headers['x-kw-secret'] || req.headers['x-kiwify-secret'];
+  const configuredSecret = process.env.KIWIFY_WEBHOOK_SECRET;
+  if (configuredSecret && secret !== configuredSecret) {
+    console.log('❌ Secret inválido. Recebido:', secret, 'Esperado:', configuredSecret);
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const payload = req.body;
-  console.log("Evento recebido:", payload.webhook_event_type);
 
-  if (payload.webhook_event_type !== 'order_approved' && payload.webhook_event_type !== 'order_paid') {
-    console.log("ℹ️ Evento ignorado:", payload.webhook_event_type);
-    return res.status(200).json({ received: true });
+  // Tenta extrair os dados de todas as formas conhecidas da Kiwify
+  let order = null;
+  if (payload.order) {
+    order = payload.order;
+  } else if (payload.data && payload.data.order) {
+    order = payload.data.order;
+  } else if (payload.Order) {
+    order = payload.Order;
+  } else if (payload.resource) {
+    order = payload.resource;
   }
 
-  const order = payload.order;
-  if (!order) {
-    console.log("❌ Nenhum pedido encontrado no payload");
-    return res.status(200).json({ received: true, error: 'no_order' });
-  }
+  // Se não encontrou um objeto "order", procura diretamente no payload
+  const customer = order?.Customer || order?.customer || payload.Customer || payload.customer || {};
+  const product = order?.Product || order?.product || payload.Product || payload.product || {};
+  const commissions = order?.Commissions || order?.commissions || payload.Commissions || payload.commissions || {};
 
-  const customer = order.Customer || {};
-  const nome = customer.full_name || customer.first_name || 'Cliente';
-  const email = customer.email;
-  const whatsapp = customer.mobile ? customer.mobile.replace(/\D/g, '') : '';
+  const nome = customer.full_name || customer.first_name || customer.name || 'Cliente';
+  const email = customer.email || '';
+  const whatsapp = (customer.mobile || customer.phone || '').replace?.(/\D/g, '') || '';
+  const produtoNome = product.product_name || product.name || 'Casa Blindada';
+  const valor = commissions.product_base_price || commissions.charge_amount || order?.amount || payload.amount || 0;
+  const comissao = commissions.my_commission || commissions.commission || (valor * 0.8);
 
-  const product = order.Product || {};
-  const produtoNome = product.product_name || 'Casa Blindada';
+  console.log(`📦 Venda processada: ${nome}, ${produtoNome}, R$ ${valor}, Comissão R$ ${comissao}`);
 
-  const commissions = order.Commissions || {};
-  const valor = commissions.product_base_price || commissions.charge_amount || 0;
-  const comissao = commissions.my_commission || (valor * 0.8);
-
-  console.log(`📦 Venda recebida: ${nome}, ${produtoNome}, R$ ${valor}, Comissão R$ ${comissao}`);
-
-  // Supabase
+  // ======================
+  // 1. Registrar no Supabase
+  // ======================
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
   if (supabaseUrl && supabaseKey) {
@@ -62,15 +65,21 @@ app.post('/api/webhook', async (req, res) => {
           created_at: new Date().toISOString()
         })
       });
-      console.log("✅ Supabase resposta:", supabaseRes.status);
+      console.log('✅ Supabase resposta:', supabaseRes.status);
+      if (!supabaseRes.ok) {
+        const errText = await supabaseRes.text();
+        console.error('❌ Erro Supabase:', errText);
+      }
     } catch (err) {
-      console.error("❌ Erro Supabase:", err.message);
+      console.error('❌ Erro ao conectar Supabase:', err.message);
     }
   } else {
-    console.warn("⚠️ Supabase não configurado");
+    console.warn('⚠️ Supabase não configurado');
   }
 
-  // Z-API
+  // ======================
+  // 2. Enviar WhatsApp via Z-API (se configurado)
+  // ======================
   const zapiInstance = process.env.ZAPI_INSTANCE;
   const zapiToken = process.env.ZAPI_TOKEN;
   const zapiClientToken = process.env.ZAPI_CLIENT_TOKEN;
@@ -90,13 +99,15 @@ app.post('/api/webhook', async (req, res) => {
           message: msg
         })
       });
-      console.log("📱 Z-API resposta:", zapiRes.status);
+      console.log('📱 Z-API resposta:', zapiRes.status);
     } catch (err) {
-      console.error("❌ Erro Z-API:", err.message);
+      console.error('❌ Erro Z-API:', err.message);
     }
   }
 
-  // Pixel Meta
+  // ======================
+  // 3. Disparar Pixel Meta (opcional)
+  // ======================
   const pixelId = process.env.META_PIXEL_ID;
   const pixelAccessToken = process.env.PIXEL_ACCESS_TOKEN;
   if (pixelId && pixelAccessToken && email) {
@@ -115,9 +126,9 @@ app.post('/api/webhook', async (req, res) => {
           access_token: pixelAccessToken
         })
       });
-      console.log("🎯 Pixel resposta:", pixelRes.status);
+      console.log('🎯 Pixel resposta:', pixelRes.status);
     } catch (err) {
-      console.error("❌ Erro Pixel:", err.message);
+      console.error('❌ Erro Pixel:', err.message);
     }
   }
 

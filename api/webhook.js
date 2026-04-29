@@ -1,13 +1,35 @@
 import express from 'express';
-import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 app.use(express.json());
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+// Configurações via variáveis de ambiente
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
+const ZAPI_INSTANCE = process.env.ZAPI_INSTANCE;
+const ZAPI_TOKEN = process.env.ZAPI_TOKEN;
+const ZAPI_CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN || '';
+const PRODUCT_LINK = process.env.PRODUCT_LINK || '';
+
+// Função para inserir no Supabase via REST
+async function insertInto(table, data) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Prefer': 'return=representation'
+    },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
 
 app.post('/api/webhook', async (req, res) => {
   try {
@@ -25,8 +47,8 @@ app.post('/api/webhook', async (req, res) => {
 
     console.log(`💰 Venda: ${nome} | ${produtoNome} | ${eventType} | R$${valorPago}`);
 
-    // 1. Registrar venda
-    await supabase.from('vendas').insert({
+    // 1. Registrar venda no Supabase (REST)
+    await insertInto('vendas', {
       prod: produtoNome,
       valor: valorPago,
       comissao: minhaComissao,
@@ -35,9 +57,9 @@ app.post('/api/webhook', async (req, res) => {
       created_at: new Date().toISOString()
     });
 
-    // 2. Se venda aprovada, registrar lead
+    // 2. Se venda aprovada, registrar lead automaticamente
     if (eventType === 'order_approved' || eventType === 'order_paid') {
-      await supabase.from('leads').insert({
+      await insertInto('leads', {
         nome: nome,
         wpp: whatsapp,
         origem: 'kiwify_automatico',
@@ -47,29 +69,35 @@ app.post('/api/webhook', async (req, res) => {
       });
     }
 
-    // 3. WhatsApp via Z-API (opcional)
-    if (whatsapp && process.env.ZAPI_INSTANCE && process.env.ZAPI_TOKEN) {
-      let msg = '';
+    // 3. WhatsApp via Z-API (se configurada)
+    if (whatsapp && ZAPI_INSTANCE && ZAPI_TOKEN) {
+      let mensagem = '';
       if (eventType === 'order_approved' || eventType === 'order_paid') {
-        msg = `🎉 *ACESSO LIBERADO!*\\n\\nOlá ${nome.split(' ')[0]}! Seu acesso ao *${produtoNome}* está pronto.\\n\\n👉 ${process.env.PRODUCT_LINK}`;
-      } else if (eventType === 'pix_created') {
-        msg = `⚠️ *PIX AGUARDANDO*\\n${nome.split(' ')[0]}, pague agora: ${process.env.PRODUCT_LINK}`;
+        mensagem = `🎉 *ACESSO LIBERADO!*\n\nOlá ${nome.split(' ')[0]}! Seu acesso ao *${produtoNome}* está pronto.\n\n👉 ${PRODUCT_LINK}\n\nQualquer dúvida, me chama aqui. 👊`;
+      } else if (eventType === 'pix_created' || eventType === 'waiting_payment') {
+        mensagem = `⚠️ *PIX GERADO*\n\n${nome.split(' ')[0]}, seu PIX para o *${produtoNome}* está esperando.\n\nPague agora: ${PRODUCT_LINK}`;
+      } else if (eventType === 'order_refunded') {
+        mensagem = `ℹ️ *REEMBOLSO PROCESSADO*\n\n${nome.split(' ')[0]}, o reembolso foi realizado. Se quiser tentar novamente: ${PRODUCT_LINK}`;
       }
-      if (msg) {
-        await fetch(`https://api.z-api.io/instances/${process.env.ZAPI_INSTANCE}/token/${process.env.ZAPI_TOKEN}/send-text`, {
+
+      if (mensagem) {
+        await fetch(`https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}/send-text`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Client-Token': process.env.ZAPI_CLIENT_TOKEN || '' },
-          body: JSON.stringify({ phone: whatsapp, message: msg })
-        });
+          headers: {
+            'Content-Type': 'application/json',
+            'Client-Token': ZAPI_CLIENT_TOKEN
+          },
+          body: JSON.stringify({ phone: whatsapp, message: mensagem })
+        }).catch(e => console.error('Z-API:', e.message));
       }
     }
 
     res.status(200).json({ success: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Webhook rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Webhook rodando na porta ${PORT}`));

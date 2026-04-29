@@ -1,9 +1,15 @@
 import express from 'express';
-import cors from 'cors'; // 👈 novo
 
 const app = express();
 app.use(express.json());
-app.use(cors()); // 👈 libera acesso do painel HTML
+
+// CORS manual — sem dependência extra
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
@@ -27,9 +33,7 @@ async function insertInto(table, data) {
   return res.json();
 }
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.post('/api/webhook', async (req, res) => {
   try {

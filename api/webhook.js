@@ -1,9 +1,10 @@
 import express from 'express';
+import cors from 'cors'; // 👈 novo
 
 const app = express();
 app.use(express.json());
+app.use(cors()); // 👈 libera acesso do painel HTML
 
-// Configurações via variáveis de ambiente
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 const ZAPI_INSTANCE = process.env.ZAPI_INSTANCE;
@@ -11,7 +12,6 @@ const ZAPI_TOKEN = process.env.ZAPI_TOKEN;
 const ZAPI_CLIENT_TOKEN = process.env.ZAPI_CLIENT_TOKEN || '';
 const PRODUCT_LINK = process.env.PRODUCT_LINK || '';
 
-// Função para inserir no Supabase via REST
 async function insertInto(table, data) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: 'POST',
@@ -47,7 +47,6 @@ app.post('/api/webhook', async (req, res) => {
 
     console.log(`💰 Venda: ${nome} | ${produtoNome} | ${eventType} | R$${valorPago}`);
 
-    // 1. Registrar venda no Supabase (REST)
     await insertInto('vendas', {
       prod: produtoNome,
       valor: valorPago,
@@ -57,7 +56,6 @@ app.post('/api/webhook', async (req, res) => {
       created_at: new Date().toISOString()
     });
 
-    // 2. Se venda aprovada, registrar lead automaticamente
     if (eventType === 'order_approved' || eventType === 'order_paid') {
       await insertInto('leads', {
         nome: nome,
@@ -69,7 +67,6 @@ app.post('/api/webhook', async (req, res) => {
       });
     }
 
-    // 3. WhatsApp via Z-API (se configurada)
     if (whatsapp && ZAPI_INSTANCE && ZAPI_TOKEN) {
       let mensagem = '';
       if (eventType === 'order_approved' || eventType === 'order_paid') {

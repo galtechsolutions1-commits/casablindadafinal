@@ -1,12 +1,14 @@
 {
   "name": "casablindada-webhook",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "Webhook automático - Casa Blindada",
   "type": "module",
-  "scripts": {
-    "start": "node api/webhook.js"
+  "engines": {
+    "node": ">=18.x"
   },
-  "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5"
-  }
+  "scripts": {
+    "dev": "node api/webhook.js",
+    "vercel-build": "echo 'Build OK'"
+  },
+  "dependencies": {}
 }

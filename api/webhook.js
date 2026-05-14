@@ -1,10 +1,9 @@
 import express from 'express';
-
 const app = express();
 app.use(express.json());
 
 app.post('/api/webhook', async (req, res) => {
-  console.log('🔔 Webhook:', JSON.stringify(req.body));
+  console.log('Webhook recebido:', JSON.stringify(req.body).substring(0, 200));
   const b = req.body;
   const customer = b.Customer || {};
   const product = b.Product || {};
@@ -16,12 +15,11 @@ app.post('/api/webhook', async (req, res) => {
   const valor = Number(commissions.charge_amount || 0);
   const comissao = Number(commissions.my_commission || (valor * 0.8));
 
-  // Supabase
   const supaUrl = process.env.SUPABASE_URL;
   const supaKey = process.env.SUPABASE_ANON_KEY;
   if (supaUrl && supaKey) {
     try {
-      await fetch(`${supaUrl}/rest/v1/vendas`, {
+      const r = await fetch(`${supaUrl}/rest/v1/vendas`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -34,7 +32,7 @@ app.post('/api/webhook', async (req, res) => {
           data: new Date().toLocaleDateString('pt-BR')
         })
       });
-      console.log('✅ Supabase OK');
+      console.log('Supabase:', r.status);
     } catch(e) { console.error('Supabase:', e.message); }
   }
 
@@ -42,4 +40,4 @@ app.post('/api/webhook', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Webhook na porta ${PORT}`));
+app.listen(PORT, () => console.log(`Webhook rodando na porta ${PORT}`));
